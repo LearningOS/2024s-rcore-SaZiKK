@@ -14,8 +14,11 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::MAX_SYSCALL_NUM;
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{MapPermission, VirtAddr};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
@@ -46,6 +49,8 @@ struct TaskManagerInner {
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
     current_task: usize,
+    ///
+    task_start_time: Vec::<usize>,
 }
 
 lazy_static! {
@@ -55,8 +60,10 @@ lazy_static! {
         let num_app = get_num_app();
         println!("num_app = {}", num_app);
         let mut tasks: Vec<TaskControlBlock> = Vec::new();
+        let mut task_start_time = Vec::new();
         for i in 0..num_app {
             tasks.push(TaskControlBlock::new(get_app_data(i), i));
+            task_start_time.push(0)
         }
         TaskManager {
             num_app,
@@ -64,6 +71,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    task_start_time,
                 })
             },
         }
@@ -80,6 +88,8 @@ impl TaskManager {
         let next_task = &mut inner.tasks[0];
         next_task.task_status = TaskStatus::Running;
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
+        //维护进程首次调度时间
+        inner.task_start_time[0] = get_time_ms();
         drop(inner);
         let mut _unused = TaskContext::zero_init();
         // before this, we should drop local variables that must be dropped manually
@@ -143,6 +153,11 @@ impl TaskManager {
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
+            
+            if inner.task_start_time[current] == 0 {
+                inner.task_start_time[current] = get_time_ms();
+            }
+            
             drop(inner);
             // before this, we should drop local variables that must be dropped manually
             unsafe {
@@ -152,6 +167,39 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+    ///update syscall times and get syscall times
+    fn count_syscall_times(&self, id: usize) -> [u32; MAX_SYSCALL_NUM] {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        if id <= MAX_SYSCALL_NUM {
+            inner.tasks[current].syscall_times[id] += 1;
+        }
+        inner.tasks[current].syscall_times
+    }
+
+    fn get_task_time(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let total_time = get_time_ms() - inner.task_start_time[current];
+        total_time
+    }
+
+    fn alloc_new_space(&self, start_va: VirtAddr,end_va: VirtAddr, permission: MapPermission) -> bool {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        if !inner.tasks[current].memory_set.space_check(start_va, end_va) {
+            return false;
+        }
+        inner.tasks[current].memory_set.insert_framed_area(start_va, end_va, permission);
+        true
+    }
+
+    fn dealloc_space(&self, start_va: VirtAddr,end_va: VirtAddr) -> bool {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].memory_set.unmap_space(start_va, end_va)
     }
 }
 
@@ -176,6 +224,16 @@ fn mark_current_exited() {
     TASK_MANAGER.mark_current_exited();
 }
 
+///get syscall times and count syscall times
+pub fn count_syscall_times_current(id: usize) -> [u32; MAX_SYSCALL_NUM] {
+    TASK_MANAGER.count_syscall_times(id)
+}
+
+/// get task process time
+pub fn get_current_task_time() -> usize {
+    TASK_MANAGER.get_task_time()
+}
+
 /// Suspend the current 'Running' task and run the next task in task list.
 pub fn suspend_current_and_run_next() {
     mark_current_suspended();
@@ -198,7 +256,18 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
     TASK_MANAGER.get_current_trap_cx()
 }
 
+
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// alloc new space for the task
+pub fn insert_new_framed_area(start_va: VirtAddr,end_va: VirtAddr, permission: MapPermission) -> bool {
+    TASK_MANAGER.alloc_new_space(start_va, end_va, permission)
+}
+
+///dealloc space
+pub fn dealloc_current_space(start_va: VirtAddr,end_va: VirtAddr) -> bool {
+    TASK_MANAGER.dealloc_space(start_va, end_va)
 }
