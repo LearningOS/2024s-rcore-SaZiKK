@@ -293,6 +293,21 @@ impl MemorySet {
             false
         }
     }
+
+    /// check if va conflict, return false when confilct
+    pub fn space_check(&self, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+        self.areas.iter().find(|maparea| maparea.is_conflict(start_va, end_va)).is_none()
+    }
+
+    /// check if va allign to edge of MapArea, return false when not
+    pub fn unmap_space(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+        if let Some(index) = self.areas.iter().position(|maparea| maparea.is_alligned(start_va, end_va)) {
+            self.areas[index].unmap(&mut self.page_table);
+            self.areas.remove(index);
+            return true;
+        }
+        false
+    }
 }
 
 pub struct MapArea {
@@ -303,6 +318,7 @@ pub struct MapArea {
 }
 
 impl MapArea {
+    ///
     pub fn new(
         start_va: VirtAddr,
         end_va: VirtAddr,
@@ -341,23 +357,29 @@ impl MapArea {
         let pte_flags = PTEFlags::from_bits(self.map_perm.bits).unwrap();
         page_table.map(vpn, ppn, pte_flags);
     }
+    ///
+    #[allow(unused)]
     pub fn unmap_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         if self.map_type == MapType::Framed {
             self.data_frames.remove(&vpn);
         }
         page_table.unmap(vpn);
     }
+    ///
     pub fn map(&mut self, page_table: &mut PageTable) {
         for vpn in self.vpn_range {
             self.map_one(page_table, vpn);
         }
     }
+    ///
+    #[allow(unused)]
     pub fn unmap(&mut self, page_table: &mut PageTable) {
         for vpn in self.vpn_range {
             self.unmap_one(page_table, vpn);
         }
     }
     #[allow(unused)]
+    ///
     pub fn shrink_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
         for vpn in VPNRange::new(new_end, self.vpn_range.get_end()) {
             self.unmap_one(page_table, vpn)
@@ -365,6 +387,7 @@ impl MapArea {
         self.vpn_range = VPNRange::new(self.vpn_range.get_start(), new_end);
     }
     #[allow(unused)]
+    ///
     pub fn append_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
         for vpn in VPNRange::new(self.vpn_range.get_end(), new_end) {
             self.map_one(page_table, vpn)
@@ -393,11 +416,33 @@ impl MapArea {
             current_vpn.step();
         }
     }
+
+    /// check if conflict
+    pub fn is_conflict(&self, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+        if VirtAddr::from(self.vpn_range.get_end()) > start_va 
+        && VirtAddr::from(self.vpn_range.get_start()) <= start_va  
+        || VirtAddr::from(self.vpn_range.get_end()) >= end_va 
+        && VirtAddr::from(self.vpn_range.get_start()) < end_va  {
+            return true;
+        }
+        false
+    }
+
+    /// check is alligned to MapArea
+    pub fn is_alligned(&self, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+        if VirtAddr::from(self.vpn_range.get_start()) == start_va  
+        && VirtAddr::from(self.vpn_range.get_end()) == end_va {
+            return true;
+        }
+        false
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum MapType {
+    ///
     Identical,
+    ///
     Framed,
 }
 

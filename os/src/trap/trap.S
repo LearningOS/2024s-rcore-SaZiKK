@@ -5,11 +5,15 @@
 .macro LOAD_GP n
     ld x\n, \n*8(sp)
 .endm
-    .section .text.trampoline
+    .section .text.trampoline 
     .globl __alltraps
     .globl __restore
     .align 2
 __alltraps:
+    bltz sp, kernel_trap_entry  # 如果(sp < 0)，跳转到kernel_trap_entry标签
+    j user_trap_entry 
+
+user_trap_entry:
     csrrw sp, sscratch, sp
     # now sp->*TrapContext in user space, sscratch->user stack
     # save other general purpose registers
@@ -44,7 +48,6 @@ __alltraps:
     jr t1
 
 __restore:
-    # a0: *TrapContext in user space(Constant); a1: user space token
     # switch to user space
     csrw satp, a1
     sfence.vma
@@ -84,3 +87,49 @@ __emergency_end:
 __trap_from_kernel:
     la sp, __emergency_end
     j trap_from_kernel    
+
+    .section .data
+    # emergency stack for kernel trap
+    # in order to print trap info even if the kernel stack is corrupted.
+__emergency:
+    .align 4
+    .space 1024 * 4
+__emergency_end:
+
+
+    .section .text
+    .globl __trap_from_kernel
+    # 2^2=4 bytes aligned for stvec
+    .align 2
+__trap_from_kernel:
+    la sp, __emergency_end
+    j trap_from_kernel    
+
+kernel_trap_entry:
+    # save other general purpose registers
+    sd x1, 1*8(sp)
+    # skip sp(x2), we will save it later
+    sd x3, 3*8(sp)
+    # skip tp(x4), application does not use it
+    # save x5~x31
+    .set n, 5
+    .rept 27
+        SAVE_GP %n
+        .set n, n+1
+    .endr
+    # we can use t0/t1/t2 freely, because they have been saved in TrapContext
+    csrr t0, sstatus
+    csrr t1, sepc
+    sd t0, 32*8(sp)
+    sd t1, 33*8(sp)
+    # read user stack from sscratch and save it in TrapContext
+    csrr t2, sscratch
+    sd t2, 2*8(sp)
+    # load kernel_satp into t0
+    ld t0, 34*8(sp)
+    # load trap_handler into t1
+    ld t1, 36*8(sp)
+    # move to kernel_sp
+    ld sp, 35*8(sp)
+    # jump to trap_handler
+    jr t1

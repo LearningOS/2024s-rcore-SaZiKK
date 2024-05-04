@@ -1,5 +1,26 @@
+//! Process management syscalls
+
+use core::{borrow::BorrowMut, mem::size_of, ptr};
+
+
+use crate::{mm::translated_byte_buffer, task::{current_user_token, dealloc_current_space, get_current_task_time, get_syscall_times_current, insert_new_framed_area, set_current_priority}};
+#[allow(unused)]
+
+use core::{borrow::BorrowMut, mem::size_of, ptr};
+
+
+use crate::{mm::translated_byte_buffer, task::{current_user_token, dealloc_current_space}};
+#[allow(unused)]
+use alloc::sync::Arc;
+
 use crate::{
-    config::MAX_SYSCALL_NUM,
+    config::MAX_SYSCALL_NUM, mm::{MapPermission, VirtAddr}, task::{
+        change_program_brk, count_syscall_times_current, exit_current_and_run_next, get_current_task_time, insert_new_framed_area, suspend_current_and_run_next, TaskStatus
+    }, timer::get_time_us,
+    config::MAX_SYSCALL_NUM, mm::{MapPermission, VirtAddr}, task::{
+         exit_current_and_run_next, suspend_current_and_run_next, TaskStatus
+    }, timer::get_time_us,
+    loader::get_app_data_by_name,
     fs::{open_file, OpenFlags},
     mm::{translated_ref, translated_refmut, translated_str},
     task::{
@@ -162,12 +183,28 @@ pub fn sys_kill(pid: usize, signal: u32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().process.upgrade().unwrap().getpid()
-    );
-    -1
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
+    trace!("kernel: sys_get_time");
+    let us = get_time_us();
+    let token = current_user_token();
+    let slices = translated_byte_buffer(token, ts as *const u8, size_of::<TimeVal>());
+    unsafe {
+        let time_val_slice : *mut TimeVal = &mut TimeVal {
+            sec: us / 1_000_000,
+            usec: us % 1_000_000,
+        };
+        let time_val_bytes: &[u8] = core::slice::from_raw_parts(
+            time_val_slice as *const u8,
+            size_of::<TimeVal>()
+        );
+        let mut offset = 0;
+        for slice in slices {
+            let slice_len = slice.len();
+            slice.copy_from_slice(&time_val_bytes[offset..offset + slice_len]);
+            offset += slice_len;
+        }
+    }
+    0
 }
 
 /// task_info syscall
