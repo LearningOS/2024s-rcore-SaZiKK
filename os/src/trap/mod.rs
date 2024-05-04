@@ -1,6 +1,6 @@
 //! Trap handling functionality
 //!
-//! For rCore, we have a single trap entry point, namely `__alltraps`. At
+//! For rCore, we have a single trap entry point, namely ``. At
 //! initialization in [`init()`], we set the `stvec` CSR to point to it.
 //!
 //! All traps go through `__alltraps`, which is defined in `trap.S`. The
@@ -17,10 +17,11 @@ mod context;
 use crate::config::{TRAMPOLINE, TRAP_CONTEXT_BASE};
 use crate::syscall::syscall;
 use crate::task::{
-    current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
+    count_syscall_times_current, current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next
 };
 use crate::timer::set_next_trigger;
 use core::arch::{asm, global_asm};
+use riscv::register::sstatus;
 use riscv::register::{
     mtvec::TrapMode,
     scause::{self, Exception, Interrupt, Trap},
@@ -57,11 +58,16 @@ pub fn enable_timer_interrupt() {
 #[no_mangle]
 pub fn trap_handler() -> ! {
     set_kernel_trap_entry();
+    match sstatus::read().spp() {
+        sstatus::SPP::Supervisor => trap_from_kernel(),
+        sstatus::SPP::User => (),
+    }
     let scause = scause::read();
     let stval = stval::read();
     // trace!("into {:?}", scause.cause());
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
+            count_syscall_times_current(cx.x[17]);
             // jump to next instruction anyway
             let mut cx = current_trap_cx();
             cx.sepc += 4;
@@ -141,6 +147,8 @@ pub fn trap_return() -> ! {
 pub fn trap_from_kernel() -> ! {
     use riscv::register::sepc;
     trace!("stval = {:#x}, sepc = {:#x}", stval::read(), sepc::read());
+    // println!("sha!");
+    // exit_current_and_run_next();
     panic!("a trap {:?} from kernel!", scause::read().cause());
 }
 

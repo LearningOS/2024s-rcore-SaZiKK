@@ -1,7 +1,16 @@
 //! Process management syscalls
+
+use core::{borrow::BorrowMut, mem::size_of, ptr};
+
+
+use crate::{mm::translated_byte_buffer, task::{current_user_token, dealloc_current_space}};
+#[allow(unused)]
 use alloc::sync::Arc;
 
 use crate::{
+    config::MAX_SYSCALL_NUM, mm::{MapPermission, VirtAddr}, task::{
+        change_program_brk, count_syscall_times_current, exit_current_and_run_next, get_current_task_time, insert_new_framed_area, suspend_current_and_run_next, TaskStatus
+    }, timer::get_time_us
     config::MAX_SYSCALL_NUM,
     loader::get_app_data_by_name,
     mm::{translated_refmut, translated_str},
@@ -117,40 +126,81 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
+    trace!("kernel: sys_get_time");
+    let us = get_time_us();
+    let token = current_user_token();
+    let slices = translated_byte_buffer(token, ts as *const u8, size_of::<TimeVal>());
+    unsafe {
+        let time_val_slice : *mut TimeVal = &mut TimeVal {
+            sec: us / 1_000_000,
+            usec: us % 1_000_000,
+        };
+        let time_val_bytes: &[u8] = core::slice::from_raw_parts(
+            time_val_slice as *const u8,
+            size_of::<TimeVal>()
+        );
+        let mut offset = 0;
+        for slice in slices {
+            let slice_len = slice.len();
+            slice.copy_from_slice(&time_val_bytes[offset..offset + slice_len]);
+            offset += slice_len;
+        }
+    }
+    0
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    //id设置为超过上限的数表示查询
+    let syscall_times = count_syscall_times_current(MAX_SYSCALL_NUM + 1);
+    let time = get_current_task_time();
+    let mut v = translated_byte_buffer(current_user_token(), _ti as *const u8, size_of::<TaskInfo>());
+    let mut ti = TaskInfo{
+    status: TaskStatus::Running,
+    syscall_times,
+    time,
+    }; 
+    unsafe{
+        let mut p = ti.borrow_mut() as *mut TaskInfo as *mut u8;
+        for slice in v.iter_mut() {
+            let len = slice.len();
+            ptr::copy_nonoverlapping(p, slice.as_mut_ptr(), len);
+            p = p.add(len);
+        }
+    } 
+    0
 }
 
-/// YOUR JOB: Implement mmap.
+
+
+// YOUR JOB: Implement mmap.
+#[allow(unused)]
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    let start_va = VirtAddr::from(_start);
+    let end_va = VirtAddr::from(_start + _len);
+    let permission =  MapPermission::from_bits((_port << 1 | 16) as u8).unwrap();
+    if _port & !0x7 != 0 || _port & 0x7 == 0 {
+       return -1;
+    }
+    if !start_va.aligned(){
+        return -1;
+    }
+    if !insert_new_framed_area(start_va, end_va, permission) {
+        return -1;
+    }
+    0
 }
 
 /// YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
+    let start_va: VirtAddr = _start.into();
+    let end_va: VirtAddr = (_start + _len).into();
+    if dealloc_current_space(start_va, end_va) {
+        return 0
+    }
     -1
 }
 
