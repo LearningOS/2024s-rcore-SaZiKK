@@ -51,11 +51,12 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     let us = get_time_us();
     let token = current_user_token();
     let slices = translated_byte_buffer(token, ts as *const u8, size_of::<TimeVal>());
+    let mut ts = TimeVal {
+        sec: us / 1_000_000,
+        usec: us % 1_000_000,
+    };
     unsafe {
-        let time_val_slice : *mut TimeVal = &mut TimeVal {
-            sec: us / 1_000_000,
-            usec: us % 1_000_000,
-        };
+        let time_val_slice = ts.borrow_mut() as *mut TimeVal;
         let time_val_bytes: &[u8] = core::slice::from_raw_parts(
             time_val_slice as *const u8,
             size_of::<TimeVal>()
