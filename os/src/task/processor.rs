@@ -5,9 +5,13 @@
 //! and the replacement and transfer of control flow of different applications are executed.
 
 use super::__switch;
-use super::{fetch_task, TaskStatus};
+use super::manager::fetch_task;
+use super::TaskStatus;
 use super::{TaskContext, TaskControlBlock};
+use crate::config::{BIG_STRIDE, MAX_SYSCALL_NUM};
+use crate::mm::{MapPermission, VirtAddr};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
@@ -44,6 +48,76 @@ impl Processor {
     pub fn current(&self) -> Option<Arc<TaskControlBlock>> {
         self.current.as_ref().map(Arc::clone)
     }
+
+    /// get current task process time
+    pub fn get_task_time(&self) -> usize {
+        let current = self.current();
+        if let Some(task) = current {
+            let total_time = get_time_ms() - task.inner_exclusive_access().start_time;
+            total_time
+        } else {
+            println!("no tasks running now, why you can get time, WTF");
+            0
+        }
+    }
+
+    /// get syscall times
+    pub fn get_syscall_times(&self) -> [u32; MAX_SYSCALL_NUM] {
+        let current = self.current();
+        if let Some(task) = current {
+            task.inner_exclusive_access().syscall_times
+        } else {
+            println!("no tasks running now, why you can get syscall times, WTF");
+            [0; MAX_SYSCALL_NUM]
+        }
+    }
+
+    /// count syscall time
+    pub fn count_syscall_times(&self, syscall_id: usize){
+        let current = self.current();
+        if let Some(task) = current {
+            task.inner_exclusive_access().syscall_times[syscall_id] += 1;
+        } else {
+            println!("no tasks running now, why you can count syscall times, WTF");
+        }
+    }
+
+    /// alloc space
+    pub fn alloc_new_space(&self, start_va: VirtAddr,end_va: VirtAddr, permission: MapPermission) -> bool {
+        let current = self.current();
+        if let Some(task) = current {
+            if !task.inner_exclusive_access().memory_set.space_check(start_va, end_va) {
+                return false;
+            }
+            task.inner_exclusive_access().memory_set.insert_framed_area(start_va, end_va, permission);
+            true
+        } else {
+            println!("no tasks running now, why you alloc space, WTF");
+            false
+        }
+    }
+    
+    /// dealloc space
+    pub fn dealloc_space(&self, start_va: VirtAddr,end_va: VirtAddr) -> bool {
+        let current = self.current();
+        if let Some(task) = current {
+            task.inner_exclusive_access().memory_set.unmap_space(start_va, end_va)
+        } else {
+            println!("no tasks running now, why you dealloc space, WTF");
+            false
+        }
+    }
+
+    ///set priority
+    pub fn set_priority(&self, priority: usize) {
+        let current = self.current();
+        if let Some(task) = current {
+            task.inner_exclusive_access().priority = priority;
+        } else {
+            println!("no tasks running now, why you can set priority, WTF");
+        }
+    }
+
 }
 
 lazy_static! {
@@ -61,6 +135,13 @@ pub fn run_tasks() {
             let mut task_inner = task.inner_exclusive_access();
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
+
+            if task_inner.start_time == 0 {
+                task_inner.start_time = get_time_ms();
+            }
+            //更新stride
+            task_inner.stride += BIG_STRIDE / task_inner.priority;
+
             // release coming task_inner manually
             drop(task_inner);
             // release coming task TCB manually

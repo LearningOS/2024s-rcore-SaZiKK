@@ -23,10 +23,11 @@ mod switch;
 mod task;
 
 use crate::fs::{open_file, OpenFlags};
+use crate::{config::MAX_SYSCALL_NUM, mm::{MapPermission, VirtAddr}};
+use crate::loader::get_app_data_by_name;
 use alloc::sync::Arc;
 pub use context::TaskContext;
 use lazy_static::*;
-pub use manager::{fetch_task, TaskManager};
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
@@ -36,6 +37,20 @@ pub use processor::{
     current_task, current_trap_cx, current_user_token, run_tasks, schedule, take_current_task,
     Processor,
 };
+
+use self::processor::PROCESSOR;
+
+/// The task manager, where all the tasks are managed.
+///
+/// Functions implemented on `TaskManager` deals with all task state transitions
+/// and task context switching. For convenience, you can find wrappers around it
+/// in the module level.
+///
+/// Most of `TaskManager` are hidden behind the field `inner`, to defer
+/// borrowing checks to runtime. You can see examples on how to use `inner` in
+/// existing functions on `TaskManager`.
+
+
 /// Suspend the current 'Running' task and run the next task in task list.
 pub fn suspend_current_and_run_next() {
     // There must be an application running.
@@ -120,3 +135,34 @@ lazy_static! {
 pub fn add_initproc() {
     add_task(INITPROC.clone());
 }
+
+///get syscall times and count syscall times
+pub fn get_syscall_times_current() -> [u32; MAX_SYSCALL_NUM] {
+    PROCESSOR.exclusive_access().get_syscall_times()
+}
+
+/// get task process time
+pub fn get_current_task_time() -> usize {
+    PROCESSOR.exclusive_access().get_task_time()
+}
+
+///count syscall times
+pub fn count_syscall_times_current(syscall_id: usize) {
+    PROCESSOR.exclusive_access().count_syscall_times(syscall_id);
+}
+
+/// alloc new space for the task
+pub fn insert_new_framed_area(start_va: VirtAddr,end_va: VirtAddr, permission: MapPermission) -> bool {
+    PROCESSOR.exclusive_access().alloc_new_space(start_va, end_va, permission)
+}
+
+///dealloc space
+pub fn dealloc_current_space(start_va: VirtAddr,end_va: VirtAddr) -> bool {
+    PROCESSOR.exclusive_access().dealloc_space(start_va, end_va)
+}
+
+/// set tsak priority
+pub fn set_current_priority(priority: usize) {
+    PROCESSOR.exclusive_access().set_priority(priority);
+}
+

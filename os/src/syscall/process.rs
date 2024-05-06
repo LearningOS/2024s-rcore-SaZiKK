@@ -1,14 +1,21 @@
 //! Process management syscalls
-//!
+
+use core::{borrow::BorrowMut, mem::size_of, ptr};
+
+
+use crate::{mm::translated_byte_buffer, task::{current_user_token, dealloc_current_space, get_current_task_time, get_syscall_times_current, insert_new_framed_area, set_current_priority}};
+#[allow(unused)]
 use alloc::sync::Arc;
 
 use crate::{
-    config::MAX_SYSCALL_NUM,
+    config::MAX_SYSCALL_NUM, mm::{MapPermission, VirtAddr}, task::{
+         exit_current_and_run_next, suspend_current_and_run_next, TaskStatus
+    }, timer::get_time_us,
+    loader::get_app_data_by_name,
     fs::{open_file, OpenFlags},
     mm::{translated_refmut, translated_str},
     task::{
-        add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next, TaskStatus,
+        add_task, current_task,
     },
 };
 
@@ -56,7 +63,7 @@ pub fn sys_fork() -> isize {
     let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
     // we do not have to move to next instruction since we have done it before
     // for child process, fork returns 0
-    trap_cx.x[10] = 0;
+    trap_cx.x[10] = 0; //切换到新任务之后会立即返回
     // add new task to scheduler
     add_task(new_task);
     new_pid as isize
@@ -129,14 +136,30 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    //id设置为超过上限的数表示查询
+    let syscall_times = get_syscall_times_current();
+    let time = get_current_task_time();
+    let mut v = translated_byte_buffer(current_user_token(), _ti as *const u8, size_of::<TaskInfo>());
+    let mut ti = TaskInfo{
+    status: TaskStatus::Running,
+    syscall_times,
+    time,
+    }; 
+    unsafe{
+        let mut p = ti.borrow_mut() as *mut TaskInfo as *mut u8;
+        for slice in v.iter_mut() {
+            let len = slice.len();
+            ptr::copy_nonoverlapping(p, slice.as_mut_ptr(), len);
+            p = p.add(len);
+        }
+    } 
+    0
 }
 
-/// YOUR JOB: Implement mmap.
+
+
+// YOUR JOB: Implement mmap.
+#[allow(unused)]
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     trace!(
         "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
@@ -166,19 +189,32 @@ pub fn sys_sbrk(size: i32) -> isize {
 
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
-pub fn sys_spawn(_path: *const u8) -> isize {
+pub fn sys_spawn(path: *const u8) -> isize {
     trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
+        "kernel:pid[{}]",
         current_task().unwrap().pid.0
     );
-    -1
+    let token = current_user_token();
+    let path = translated_str(token, path);
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let task = current_task().unwrap();
+        task.spawn(data) as isize
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.
-pub fn sys_set_priority(_prio: isize) -> isize {
+pub fn sys_set_priority(prio: isize) -> isize {
     trace!(
         "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if prio >=2 {
+        set_current_priority(prio as usize);
+        prio
+    }
+    else {
+        -1
+    }
 }
