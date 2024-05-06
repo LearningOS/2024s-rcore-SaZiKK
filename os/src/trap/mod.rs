@@ -67,9 +67,9 @@ pub fn trap_handler() -> ! {
     // trace!("into {:?}", scause.cause());
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
-            count_syscall_times_current(cx.x[17]);
             // jump to next instruction anyway
             let mut cx = current_trap_cx();
+            count_syscall_times_current(cx.x[17]);
             cx.sepc += 4;
             // get system call return value
             let result = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]);
@@ -147,8 +147,6 @@ pub fn trap_return() -> ! {
 pub fn trap_from_kernel() -> ! {
     use riscv::register::sepc;
     trace!("stval = {:#x}, sepc = {:#x}", stval::read(), sepc::read());
-    // println!("sha!");
-    // exit_current_and_run_next();
     panic!("a trap {:?} from kernel!", scause::read().cause());
 }
 
