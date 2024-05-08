@@ -1,26 +1,15 @@
 //! Process management syscalls
-
-use core::{borrow::BorrowMut, mem::size_of, ptr};
-
-
-use crate::{mm::translated_byte_buffer, task::{current_user_token, dealloc_current_space, get_current_task_time, get_syscall_times_current, insert_new_framed_area, set_current_priority}};
+use crate::{mm::translated_byte_buffer, task::{current_user_token, dealloc_current_space, exit_current_and_run_next, get_current_task_time, get_syscall_times_current, insert_new_framed_area, set_current_priority, suspend_current_and_run_next}};
 #[allow(unused)]
 
 use core::{borrow::BorrowMut, mem::size_of, ptr};
 
 
-use crate::{mm::translated_byte_buffer, task::{current_user_token, dealloc_current_space}};
 #[allow(unused)]
 use alloc::sync::Arc;
 
 use crate::{
-    config::MAX_SYSCALL_NUM, mm::{MapPermission, VirtAddr}, task::{
-        change_program_brk, count_syscall_times_current, exit_current_and_run_next, get_current_task_time, insert_new_framed_area, suspend_current_and_run_next, TaskStatus
-    }, timer::get_time_us
-    config::MAX_SYSCALL_NUM, mm::{MapPermission, VirtAddr}, task::{
-         exit_current_and_run_next, suspend_current_and_run_next, TaskStatus
-    }, timer::get_time_us,
-    loader::get_app_data_by_name,
+    config::MAX_SYSCALL_NUM, mm::{MapPermission, VirtAddr}, task::TaskStatus, timer::get_time_us,
     fs::{open_file, OpenFlags},
     mm::{translated_refmut, translated_str},
     task::{
@@ -225,14 +214,16 @@ pub fn sys_sbrk(size: i32) -> isize {
 /// HINT: fork + exec =/= spawn
 pub fn sys_spawn(path: *const u8) -> isize {
     trace!(
-        "kernel:pid[{}]",
+        "kernel:pid[{}] sys_spawn",
         current_task().unwrap().pid.0
     );
     let token = current_user_token();
     let path = translated_str(token, path);
-    if let Some(data) = get_app_data_by_name(path.as_str()) {
+    println!("{}",path);
+    if let Some(app_inode) = open_file(path.as_str(), OpenFlags::RDONLY) {
+        let all_data = app_inode.read_all();
         let task = current_task().unwrap();
-        task.spawn(data) as isize
+        task.spawn(all_data.as_slice()) as isize
     } else {
         -1
     }

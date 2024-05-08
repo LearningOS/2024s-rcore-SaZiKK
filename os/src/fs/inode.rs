@@ -4,7 +4,7 @@
 //!
 //! `UPSafeCell<OSInodeInner>` -> `OSInode`: for static `ROOT_INODE`,we
 //! need to wrap `OSInodeInner` into `UPSafeCell`
-use super::File;
+use super::{File, StatMode};
 use crate::drivers::BLOCK_DEVICE;
 use crate::mm::UserBuffer;
 use crate::sync::UPSafeCell;
@@ -55,6 +55,7 @@ impl OSInode {
 }
 
 lazy_static! {
+    /// init root node
     pub static ref ROOT_INODE: Arc<Inode> = {
         let efs = EasyFileSystem::open(BLOCK_DEVICE.clone());
         Arc::new(EasyFileSystem::root_inode(&efs))
@@ -124,6 +125,21 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
     }
 }
 
+/// create a new hard link
+pub fn link(new_name: &str, old_name: &str) {
+    ROOT_INODE.new_link(new_name, old_name);
+}
+
+/// deletea a hard link
+pub fn unlink(name: &str) {
+    ROOT_INODE.delete_link(name);
+}
+
+/// find a file
+pub fn find_file(name: &str) -> Option<Arc<Inode>> {
+    ROOT_INODE.find(name)
+}
+
 impl File for OSInode {
     fn readable(&self) -> bool {
         self.readable
@@ -154,5 +170,14 @@ impl File for OSInode {
             total_write_size += write_size;
         }
         total_write_size
+    }
+    fn fetch_metadata(&self) -> (u64, super::StatMode, u32) {
+        let inner = self.inner.exclusive_access();
+        let (inode_id, mode, link_count) = inner.inode.file_info();
+        let mode = match mode {
+            true => StatMode::DIR,
+            false => StatMode::FILE,
+        };
+        (inode_id, mode, link_count)
     }
 }

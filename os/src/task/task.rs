@@ -1,7 +1,7 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::{add_task, TaskContext};
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
@@ -64,6 +64,7 @@ pub struct TaskControlBlockInner {
 
     /// It is set when active exit or execution error occurs
     pub exit_code: i32,
+
     pub fd_table: Vec<Option<Arc<dyn File + Send + Sync>>>,
 
     /// Heap bottom
@@ -148,6 +149,9 @@ impl TaskControlBlock {
                     heap_bottom: user_sp,
                     program_brk: user_sp,
                     syscall_times: [0; MAX_SYSCALL_NUM],
+                    start_time: 0,
+                    stride: 0,
+                    priority: 16,
                 })
             },
             
@@ -220,6 +224,14 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    fd_table: vec![
+                        // 0 -> stdin
+                        Some(Arc::new(Stdin)),
+                        // 1 -> stdout
+                        Some(Arc::new(Stdout)),
+                        // 2 -> stderr
+                        Some(Arc::new(Stdout)),
+                    ],
                     syscall_times: [0; MAX_SYSCALL_NUM],
                     start_time: 0,
                     stride: 0,
@@ -274,6 +286,14 @@ impl TaskControlBlock {
                         parent: Some(Arc::downgrade(self)),
                         children: Vec::new(),
                         exit_code: 0,
+                        fd_table: vec![
+                            // 0 -> stdin
+                            Some(Arc::new(Stdin)),
+                            // 1 -> stdout
+                            Some(Arc::new(Stdout)),
+                            // 2 -> stderr
+                            Some(Arc::new(Stdout)),
+                        ],
                         heap_bottom: parent_inner.heap_bottom,
                         program_brk: parent_inner.program_brk,
                         syscall_times: [0; MAX_SYSCALL_NUM],

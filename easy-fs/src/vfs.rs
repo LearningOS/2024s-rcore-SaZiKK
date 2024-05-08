@@ -1,3 +1,4 @@
+
 use super::{
     block_cache_sync_all, get_block_cache, BlockDevice, DirEntry, DiskInode, DiskInodeType,
     EasyFileSystem, DIRENT_SZ,
@@ -5,6 +6,7 @@ use super::{
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use log::warn;
 use spin::{Mutex, MutexGuard};
 /// Virtual filesystem layer over easy-fs
 pub struct Inode {
@@ -42,7 +44,7 @@ impl Inode {
             .modify(self.block_offset, f)
     }
     /// Find inode under a disk inode by name
-    fn find_inode_id(&self, name: &str, disk_inode: &DiskInode) -> Option<u32> {
+    pub fn find_inode_id(&self, name: &str, disk_inode: &DiskInode) -> Option<u32> {
         // assert it is a directory
         assert!(disk_inode.is_dir());
         let file_count = (disk_inode.size as usize) / DIRENT_SZ;
@@ -138,6 +140,77 @@ impl Inode {
         )))
         // release efs lock automatically by compiler
     }
+    /// create a new hard link
+    pub fn new_link(&self, new_name: &str, old_name: &str) {
+        if let Some(inode) = self.find(new_name){
+            inode.clear();
+        } 
+        if let Some(inode) =  self.find(old_name){
+            inode.modify_disk_inode(|disk_inode| {
+                disk_inode.link_count += 1;
+            });
+        }
+        let inode_id = self.read_disk_inode(|disk_inode| {
+            self.find_inode_id(old_name, disk_inode).unwrap()
+        });
+        let mut fs = self.fs.lock();
+        //插入新页表项
+        self.modify_disk_inode(|root_inode| {
+            // append file in the dirent
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let new_size = (file_count + 1) * DIRENT_SZ;
+            // increase size
+            self.increase_size(new_size as u32, root_inode, &mut fs);
+            // write dirent
+            let dirent = DirEntry::new(new_name, inode_id);
+            root_inode.write_at(
+                file_count * DIRENT_SZ,
+                dirent.as_bytes(),
+                &self.block_device,
+            );
+        });
+        block_cache_sync_all();
+    }
+
+    /// delete a hard link
+    pub fn delete_link(&self, name: &str) {
+        let link_num =  self.find(name).unwrap().modify_disk_inode(|disk_inode| {
+            disk_inode.link_count -= 1;
+            disk_inode.link_count
+        });
+        if link_num == 0 {
+            self.find(name).unwrap().clear();
+        }
+        self.modify_disk_inode(|disk_inode|{
+            let file_count = (disk_inode.size as usize) / DIRENT_SZ;
+            let mut dirent = DirEntry::empty();
+            for i in 0..file_count {
+                assert_eq!(
+                    disk_inode.read_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device,),
+                    DIRENT_SZ,
+                );
+                if dirent.name() == name {
+                    for byte in dirent.name.iter_mut() {
+                        *byte = 0u8;
+                    }
+                    disk_inode.write_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device);
+                    break;
+                }
+            }
+        });
+        
+        block_cache_sync_all();
+    }
+
+    /// get file metadata
+    pub fn file_info(&self) ->(u64, bool, u32) {
+        let inode_id = self.block_id;
+        let (mode, link_count) = self.read_disk_inode(|disk_inode|{
+            (disk_inode.is_dir(), disk_inode.link_count)
+        });
+        (inode_id as u64, mode, link_count)
+    }
+
     /// List inodes under current inode
     pub fn ls(&self) -> Vec<String> {
         let _fs = self.fs.lock();

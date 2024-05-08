@@ -24,7 +24,6 @@ mod task;
 
 use crate::fs::{open_file, OpenFlags};
 use crate::{config::MAX_SYSCALL_NUM, mm::{MapPermission, VirtAddr}};
-use crate::loader::get_app_data_by_name;
 use alloc::sync::Arc;
 pub use context::TaskContext;
 use lazy_static::*;
