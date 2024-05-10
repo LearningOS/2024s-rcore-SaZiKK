@@ -88,23 +88,6 @@ __trap_from_kernel:
     la sp, __emergency_end
     j trap_from_kernel    
 
-    .section .data
-    # emergency stack for kernel trap
-    # in order to print trap info even if the kernel stack is corrupted.
-__emergency:
-    .align 4
-    .space 1024 * 4
-__emergency_end:
-
-
-    .section .text
-    .globl __trap_from_kernel
-    # 2^2=4 bytes aligned for stvec
-    .align 2
-__trap_from_kernel:
-    la sp, __emergency_end
-    j trap_from_kernel    
-
 kernel_trap_entry:
     # save other general purpose registers
     sd x1, 1*8(sp)

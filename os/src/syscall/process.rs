@@ -1,43 +1,18 @@
 //! Process management syscalls
 
-use core::{borrow::BorrowMut, mem::size_of, ptr};
+use core::mem::size_of;
 
-
-use crate::{mm::translated_byte_buffer, task::{current_user_token, dealloc_current_space, get_current_task_time, get_syscall_times_current, insert_new_framed_area, set_current_priority}};
-#[allow(unused)]
-
-use core::{borrow::BorrowMut, mem::size_of, ptr};
-
-
-use crate::{mm::translated_byte_buffer, task::{current_user_token, dealloc_current_space}};
-#[allow(unused)]
-use alloc::sync::Arc;
-
-use crate::{
-    config::MAX_SYSCALL_NUM, mm::{MapPermission, VirtAddr}, task::{
-        change_program_brk, count_syscall_times_current, exit_current_and_run_next, get_current_task_time, insert_new_framed_area, suspend_current_and_run_next, TaskStatus
-    }, timer::get_time_us,
-    config::MAX_SYSCALL_NUM, mm::{MapPermission, VirtAddr}, task::{
-         exit_current_and_run_next, suspend_current_and_run_next, TaskStatus
-    }, timer::get_time_us,
-    loader::get_app_data_by_name,
-    fs::{open_file, OpenFlags},
-    mm::{translated_ref, translated_refmut, translated_str},
-    task::{
-        current_process, current_task, current_user_token, exit_current_and_run_next, pid2process,
-        suspend_current_and_run_next, SignalFlags, TaskStatus,
-    },
-};
 use alloc::{string::String, sync::Arc, vec::Vec};
 
-#[repr(C)]
+use crate::{config::MAX_SYSCALL_NUM, fs::{open_file, OpenFlags}, mm::{translated_byte_buffer, translated_ref, translated_refmut, translated_str}, task::{current_process, current_task, current_user_token, exit_current_and_run_next, pid2process, suspend_current_and_run_next, SignalFlags, TaskStatus}, timer::get_time_us};
+
+
 #[derive(Debug)]
 pub struct TimeVal {
-    pub sec: usize,
     pub usec: usize,
+    pub sec: usize,
 }
 
-/// Task information
 #[allow(dead_code)]
 pub struct TaskInfo {
     /// Task status in it's life cycle

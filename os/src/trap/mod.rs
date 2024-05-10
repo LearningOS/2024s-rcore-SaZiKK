@@ -71,7 +71,6 @@ pub fn trap_handler() -> ! {
     // trace!("into {:?}", scause.cause());
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
-            count_syscall_times_current(cx.x[17]);
             // jump to next instruction anyway
             let mut cx = current_trap_cx();
             cx.sepc += 4;
