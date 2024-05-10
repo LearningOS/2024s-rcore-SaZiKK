@@ -9,8 +9,8 @@ use crate::{config::MAX_SYSCALL_NUM, fs::{open_file, OpenFlags}, mm::{translated
 
 #[derive(Debug)]
 pub struct TimeVal {
-    pub usec: usize,
     pub sec: usize,
+    pub usec: usize,
 }
 
 #[allow(dead_code)]
